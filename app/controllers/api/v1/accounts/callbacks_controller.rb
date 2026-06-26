@@ -6,19 +6,25 @@ class Api::V1::Accounts::CallbacksController < Api::V1::Accounts::BaseController
     page_access_token = params[:page_access_token]
     page_id = params[:page_id]
     inbox_name = params[:inbox_name]
+
     ActiveRecord::Base.transaction do
       facebook_channel = Current.account.facebook_pages.create!(
-        page_id: page_id, user_access_token: user_access_token,
+        page_id: page_id,
+        user_access_token: user_access_token,
         page_access_token: page_access_token
       )
-      @facebook_inbox = Current.account.inboxes.create!(name: inbox_name, channel: facebook_channel)
+
+      @facebook_inbox = Current.account.inboxes.create!(
+        name: inbox_name,
+        channel: facebook_channel
+      )
+
       set_instagram_id(page_access_token, facebook_channel)
       set_avatar(@facebook_inbox, page_id)
     end
   rescue StandardError => e
     ChatwootExceptionTracker.new(e).capture_exception
     Rails.logger.error "Error in register_facebook_page: #{e.message}"
-    # Additional log statements
     log_additional_info
   end
 
@@ -33,22 +39,18 @@ class Api::V1::Accounts::CallbacksController < Api::V1::Accounts::BaseController
     pages = []
     fb_pages = fb_object.get_connections('me', 'accounts')
     pages.concat(fb_pages)
+
     while fb_pages.respond_to?(:next_page) && (next_page = fb_pages.next_page)
       fb_pages = next_page
       pages.concat(fb_pages)
     end
+
     @page_details = mark_already_existing_facebook_pages(pages)
   end
 
   def set_instagram_id(page_access_token, facebook_channel)
-    fb_object = Koala::Facebook::API.new(page_access_token)
-    response = fb_object.get_connections('me', '', { fields: 'instagram_business_account' })
-    return if response['instagram_business_account'].blank?
-
-    instagram_id = response['instagram_business_account']['id']
-    facebook_channel.update(instagram_id: instagram_id)
-  rescue StandardError => e
-    Rails.logger.error "Error in set_instagram_id: #{e.message}"
+    Rails.logger.info 'Skipping Instagram ID sync for Facebook Messenger inbox.'
+    nil
   end
 
   # get params[:inbox_id], current_account. params[:omniauth_token]
@@ -74,8 +76,13 @@ class Api::V1::Accounts::CallbacksController < Api::V1::Accounts::BaseController
 
   def update_fb_page(fb_page_id, access_token)
     fb_page = get_fb_page(fb_page_id)
+
     ActiveRecord::Base.transaction do
-      fb_page&.update!(user_access_token: @user_access_token, page_access_token: access_token)
+      fb_page&.update!(
+        user_access_token: @user_access_token,
+        page_access_token: access_token
+      )
+
       set_instagram_id(access_token, fb_page)
       fb_page&.reauthorized!
     rescue StandardError => e
@@ -94,7 +101,11 @@ class Api::V1::Accounts::CallbacksController < Api::V1::Accounts::BaseController
   end
 
   def long_lived_token(omniauth_token)
-    koala = Koala::Facebook::OAuth.new(GlobalConfigService.load('FB_APP_ID', ''), GlobalConfigService.load('FB_APP_SECRET', ''))
+    koala = Koala::Facebook::OAuth.new(
+      GlobalConfigService.load('FB_APP_ID', ''),
+      GlobalConfigService.load('FB_APP_SECRET', '')
+    )
+
     koala.exchange_access_token_info(omniauth_token)['access_token']
   rescue StandardError => e
     Rails.logger.error "Error in long_lived_token: #{e.message}"
