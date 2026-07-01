@@ -42,16 +42,7 @@ class Instagram::CallbacksController < ApplicationController
     Rails.logger.info("[Instagram OAuth Callback] token_response_body=#{token_response.body}")
 
     unless token_response.success?
-      raise OAuth2::Error.new(
-        OAuth2::Response.new(
-          nil,
-          {
-            status: token_response.code,
-            body: token_response.body,
-            headers: token_response.headers
-          }
-        )
-      )
+      raise StandardError, token_response.body
     end
 
     short_lived_token = JSON.parse(token_response.body)['access_token']
