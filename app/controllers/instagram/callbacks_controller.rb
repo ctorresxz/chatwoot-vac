@@ -27,13 +27,36 @@ class Instagram::CallbacksController < ApplicationController
     Rails.logger.info("[Instagram OAuth Callback] code_present=#{oauth_code.present?}")
     Rails.logger.info("[Instagram OAuth Callback] state_present=#{params[:state].present?}")
 
-    @response = instagram_client.auth_code.get_token(
-      oauth_code,
-      redirect_uri: redirect_uri,
-      grant_type: 'authorization_code'
+    token_response = HTTParty.post(
+      'https://api.instagram.com/oauth/access_token',
+      body: {
+        client_id: GlobalConfigService.load('INSTAGRAM_APP_ID', nil),
+        client_secret: GlobalConfigService.load('INSTAGRAM_APP_SECRET', nil),
+        grant_type: 'authorization_code',
+        redirect_uri: redirect_uri,
+        code: oauth_code
+      }
     )
 
-    @long_lived_token_response = exchange_for_long_lived_token(@response.token)
+    Rails.logger.info("[Instagram OAuth Callback] token_response_status=#{token_response.code}")
+    Rails.logger.info("[Instagram OAuth Callback] token_response_body=#{token_response.body}")
+
+    unless token_response.success?
+      raise OAuth2::Error.new(
+        OAuth2::Response.new(
+          nil,
+          {
+            status: token_response.code,
+            body: token_response.body,
+            headers: token_response.headers
+          }
+        )
+      )
+    end
+
+    short_lived_token = JSON.parse(token_response.body)['access_token']
+
+    @long_lived_token_response = exchange_for_long_lived_token(short_lived_token)
     inbox, already_exists = find_or_create_inbox
 
     return redirect_to app_onboarding_inbox_setup_url(account_id: account_id) if return_to == 'onboarding'
