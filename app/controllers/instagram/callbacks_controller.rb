@@ -29,13 +29,16 @@ class Instagram::CallbacksController < ApplicationController
 
     token_response = HTTParty.post(
       'https://api.instagram.com/oauth/access_token',
-      body: {
+      headers: {
+        'Content-Type' => 'application/x-www-form-urlencoded'
+      },
+      body: URI.encode_www_form(
         client_id: GlobalConfigService.load('INSTAGRAM_APP_ID', nil),
         client_secret: GlobalConfigService.load('INSTAGRAM_APP_SECRET', nil),
         grant_type: 'authorization_code',
         redirect_uri: redirect_uri,
         code: oauth_code
-      }
+      )
     )
 
     Rails.logger.info("[Instagram OAuth Callback] token_response_status=#{token_response.code}")
