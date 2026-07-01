@@ -21,7 +21,7 @@ class Instagram::CallbacksController < ApplicationController
   def process_successful_authorization
     @response = instagram_client.auth_code.get_token(
       oauth_code,
-      redirect_uri: "#{base_url}/#{provider_name}/callback",
+      redirect_uri: "#{base_url}/instagram/callback",
       grant_type: 'authorization_code'
     )
 
