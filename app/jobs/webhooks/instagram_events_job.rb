@@ -10,8 +10,10 @@ class Webhooks::InstagramEventsJob < MutexApplicationJob
   # then process without the lock instead of dropping the webhook.
   retry_on_lock_conflict wait: ->(executions) { executions.seconds }, attempts: 3, on_exhaustion: :process_without_lock
 
-  # @return [Array] We will support further events like reaction or seen in future
-  SUPPORTED_EVENTS = [:message, :read].freeze
+  # Only process real message events for now.
+  # Instagram also sends read receipts, message edits and other events that may not
+  # include sender/recipient, so processing them here can break conversation creation.
+  SUPPORTED_EVENTS = [:message].freeze
 
   def perform(entries)
     @entries = entries
@@ -50,17 +52,34 @@ class Webhooks::InstagramEventsJob < MutexApplicationJob
 
   def process_messages(entry)
     messages(entry).each do |messaging|
+      messaging = messaging.with_indifferent_access
+
       Rails.logger.info("Instagram Events Job Messaging: #{messaging}")
 
-      instagram_id = instagram_id(messaging)
-      channel = find_channel(instagram_id)
+      next unless processable_event?(messaging)
 
+      instagram_id = instagram_id(messaging)
+      next if instagram_id.blank?
+
+      channel = find_channel(instagram_id)
       next if channel.blank?
 
       if (event_name = event_name(messaging))
         send(event_name, messaging, channel)
       end
     end
+  end
+
+  def processable_event?(messaging)
+    return false if messaging.blank?
+
+    # Ignore Instagram events that do not create or update a conversation.
+    # Examples: read receipts, message edits, delivery receipts.
+    return false if messaging[:read].present?
+    return false if messaging[:message_edit].present?
+    return false if messaging[:delivery].present?
+
+    messaging[:message].present?
   end
 
   def agent_message_via_echo?(messaging)
@@ -83,9 +102,9 @@ class Webhooks::InstagramEventsJob < MutexApplicationJob
 
   def instagram_id(messaging)
     if agent_message_via_echo?(messaging)
-      messaging[:sender][:id]
+      messaging.dig(:sender, :id)
     else
-      messaging[:recipient][:id]
+      messaging.dig(:recipient, :id)
     end
   end
 
@@ -100,6 +119,8 @@ class Webhooks::InstagramEventsJob < MutexApplicationJob
     # Handle both messaging and standby arrays
     messaging = (entry[:messaging].presence || entry[:standby] || []).first
     return nil unless messaging
+
+    messaging = messaging.with_indifferent_access
 
     # For echo messages (outgoing from our account), use recipient's ID (the contact)
     # For incoming messages (from contact), use sender's ID (the contact)
@@ -116,17 +137,17 @@ class Webhooks::InstagramEventsJob < MutexApplicationJob
 
   def find_channel(instagram_id)
     # There will be chances for the instagram account to be connected to a facebook page,
-    # so we need to check for both instagram and facebook page channels
-    # priority is for instagram channel which created via instagram login
+    # so we need to check for both instagram and facebook page channels.
+    # Priority is for instagram channel which was created via instagram login.
     channel = Channel::Instagram.find_by(instagram_id: instagram_id)
-    # If not found, fallback to the facebook page channel
+    # If not found, fallback to the facebook page channel.
     channel ||= Channel::FacebookPage.find_by(instagram_id: instagram_id)
 
     channel
   end
 
   def event_name(messaging)
-    @event_name ||= SUPPORTED_EVENTS.find { |key| messaging.key?(key) }
+    SUPPORTED_EVENTS.find { |key| messaging.key?(key) }
   end
 
   def message(messaging, channel)
@@ -138,7 +159,9 @@ class Webhooks::InstagramEventsJob < MutexApplicationJob
   end
 
   def read(messaging, channel)
-    # Use a single service to handle read status for both channel types since the params are same
+    # Kept for compatibility if read events are re-enabled later.
+    # Currently read events are intentionally ignored because Instagram may send
+    # them without sender/recipient fields, which breaks instagram_id resolution.
     ::Instagram::ReadStatusService.new(params: messaging, channel: channel).perform
   end
 
@@ -208,7 +231,7 @@ end
 # Test response via Facebook page
 # [
 #   {
-#     "time": <timestamp>,,
+#     "time": <timestamp>,
 #     "id": "0",
 #     "messaging": [
 #       {
@@ -220,8 +243,8 @@ end
 #         },
 #         "timestamp": <timestamp>,
 #         "message": {
-#             "mid": "random_mid",
-#             "text": "random_text"
+#           "mid": "random_mid",
+#           "text": "random_text"
 #         }
 #       }
 #     ]
