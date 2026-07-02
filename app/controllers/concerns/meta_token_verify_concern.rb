@@ -27,13 +27,21 @@ module MetaTokenVerifyConcern
 
   def valid_meta_signature?
     signature = request.headers[META_SIGNATURE_HEADER]
+    secrets = meta_app_secrets.compact_blank.uniq
+
+    Rails.logger.info("[Meta Signature] signature_present=#{signature.present?}")
+    Rails.logger.info("[Meta Signature] signature_prefix_ok=#{signature&.start_with?(META_SIGNATURE_PREFIX)}")
+    Rails.logger.info("[Meta Signature] secrets_count=#{secrets.count}")
+
     return false unless signature&.start_with?(META_SIGNATURE_PREFIX)
 
-    meta_app_secrets.any? do |secret|
-      next false if secret.blank?
-
+    secrets.any? do |secret|
       expected_signature = "#{META_SIGNATURE_PREFIX}#{OpenSSL::HMAC.hexdigest('SHA256', secret, meta_request_body)}"
-      ActiveSupport::SecurityUtils.secure_compare(expected_signature, signature)
+      match = ActiveSupport::SecurityUtils.secure_compare(expected_signature, signature)
+
+      Rails.logger.info("[Meta Signature] tested_secret_hash=#{Digest::SHA256.hexdigest(secret.to_s)[0,12]} match=#{match}")
+
+      match
     end
   end
 
