@@ -49,8 +49,32 @@ class Api::V1::Accounts::CallbacksController < Api::V1::Accounts::BaseController
   end
 
   def set_instagram_id(page_access_token, facebook_channel)
-    Rails.logger.info 'Skipping Instagram ID sync for Facebook Messenger inbox.'
-    nil
+    return if facebook_channel.blank?
+
+    begin
+      response = Koala::Facebook::API.new(page_access_token).get_object(
+        facebook_channel.page_id,
+        fields: 'instagram_business_account'
+      )
+
+      instagram_id = response.dig('instagram_business_account', 'id')
+
+      if instagram_id.present?
+        facebook_channel.update(instagram_id: instagram_id)
+        Rails.logger.info(
+          "Instagram ID synced for Facebook page. facebook_page_id=#{facebook_channel.page_id}, instagram_id=#{instagram_id}"
+        )
+      else
+        Rails.logger.info(
+          "Instagram ID not found for Facebook page. facebook_page_id=#{facebook_channel.page_id}"
+        )
+      end
+    rescue StandardError => e
+      Rails.logger.warn(
+        "Instagram ID sync skipped for Facebook page. Error: #{e.message}"
+      )
+      nil
+    end
   end
 
   # get params[:inbox_id], current_account. params[:omniauth_token]
